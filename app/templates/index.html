@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Whisper · Encoder/Decoder Explorer</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Whisper <span>Encoder/Decoder Explorer</span></h1>
+    <p class="subtitle">
+      Sube un audio y valida cómo el encoder y el decoder de Whisper lo transcriben.
+      Modelo <code>{{ model_name }}</code> · dispositivo <code>{{ device }}</code> ·
+      cargado en {{ load_s }} s.
+    </p>
+    <div class="arch" id="arch-summary"></div>
+  </header>
+
+  <main>
+    <!-- Sección de subida -->
+    <section class="card" id="upload-card">
+      <h2>1 · Sube tu audio</h2>
+      <form id="upload-form">
+        <div class="dropzone" id="dropzone">
+          <p>Arrastra aquí tu audio, o haz clic para elegir</p>
+          <p class="hint">mp3, wav, m4a, flac, ogg, opus… (máx 100 MB). También acepta vídeo (mp4, webm).</p>
+          <input type="file" id="file-input" name="file" accept="audio/*,video/*,.mp3,.wav,.m4a,.flac,.ogg,.opus,.aac,.wma,.webm,.mp4,.mov,.avi,.mkv" hidden />
+        </div>
+        <div class="row">
+          <label>
+            Idioma
+            <select name="language" id="language">
+              {% for code, label in languages %}
+              <option value="{{ code }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            Tarea
+            <select name="task" id="task">
+              <option value="transcribe">Transcribir</option>
+              <option value="translate">Traducir a inglés</option>
+            </select>
+          </label>
+          <button type="submit" id="submit-btn" disabled>Transcribir y analizar</button>
+        </div>
+      </form>
+      <div id="selected-file" class="selected-file"></div>
+      <div id="progress" class="progress hidden">
+        <div class="spinner"></div>
+        <p id="progress-text">Cargando modelo y transcribiendo… la primera petición puede tardar más.</p>
+      </div>
+      <div id="error" class="error hidden"></div>
+    </section>
+
+    <!-- Sección de resultados -->
+    <section id="results" class="hidden">
+      <div class="card">
+        <h2>2 · Transcripción</h2>
+        <div id="meta"></div>
+        <div id="language-probs" class="lang-probs"></div>
+        <p id="transcript-text" class="transcript"></p>
+        <h3>Segmentos con tiempos</h3>
+        <ul id="segments" class="segments"></ul>
+      </div>
+
+      <div class="card">
+        <h2>3 · Pipeline: encoder → decoder</h2>
+
+        <div class="stage">
+          <h3>Entrada · Mel spectrograma <span class="badge">encoder</span></h3>
+          <p class="stage-note">
+            El audio se convierte a un espectrograma de 80 bandas mel (frame ≈ 1/100 s) y se
+            rellena/corta a 30 s = 3000 frames. El encoder recibe <b>(80, 3000)</b>.
+          </p>
+          <canvas id="mel-canvas" class="heatmap"></canvas>
+        </div>
+
+        <div class="stage">
+          <h3>Encoder · Activaciones por capa <span class="badge">encoder</span></h3>
+          <p class="stage-note">
+            <code>conv1 → gelu → conv2(stride 2) → conv+embedding posicional → 6 bloques de
+            atención+MLP → ln_post</code>. La salida reduce 3000 → <b>1500 features</b> de 512
+            dims (una por cada ~0,02 s). Cada fila es la intensidad media de activación a lo
+            largo del tiempo (normalizada por capa).
+          </p>
+          <canvas id="encoder-canvas" class="heatmap"></canvas>
+          <div id="encoder-stats" class="stats-table"></div>
+        </div>
+
+        <div class="stage">
+          <h3>Decoder · Generación token a token <span class="badge">decoder</span></h3>
+          <p class="stage-note">
+            El decoder recibe <b>1500 features</b> del encoder como atención cruzada y genera el
+            texto autoregresivamente: en cada paso produce logits sobre el vocabulario
+            ({{ arch.n_vocab }} tokens) y elegimos el de mayor probabilidad (greedy, T=0).
+            La secuencia empieza con los tokens especiales de control.
+          </p>
+          <div id="decoder-details" class="decoder-details"></div>
+          <table class="steps" id="steps-table">
+            <thead>
+              <tr><th>Paso</th><th>Token elegido</th><th>p(token)</th><th class="wide">Alternativas top-5</th></tr>
+            </thead>
+            <tbody id="steps-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Hecho con openai-whisper · La API de introspección replica <code>whisper/decoding.py</code> (kv-cache, filtros de logits).</p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

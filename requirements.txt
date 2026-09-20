@@ -1,0 +1,7 @@
+openai-whisper==20250625
+torch==2.14.0+cpu
+torchaudio==2.11.0+cpu
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+python-multipart==0.0.32
+Jinja2==3.1.6

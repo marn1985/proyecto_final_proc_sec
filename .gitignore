@@ -1,0 +1,9 @@
+# Entorno virtual
+env/
+
+# Archivos generados / temporales
+__pycache__/
+*.pyc
+uploads/
+samples/
+.cache/
