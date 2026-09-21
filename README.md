@@ -100,3 +100,9 @@ env\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --relo
   transcripción se hace sobre el audio completo; en audios > 30 s se muestran los
   **primeros** 30 s.
 - Los análisis se serializan con un semáforo para no saturar la CPU.
+- **Grabación con micrófono**: la página captura PCM por **Web Audio API** y lo codifica
+  como **WAV mono 16 kHz** en el navegador (con selector de micrófono y barra de nivel
+  en vivo). Si el micrófono no captura audio en Chrome, **prueba con Microsoft Edge**:
+  algunos equipos con micrófonos array fallan en Chrome (grabación muda) y funcionan
+  bien en Edge. Asegúrate de que el **dispositivo de entrada** de Windows sea el
+  micrófono real y no "Mezcla estéreo" (que captura el sonido del sistema, no el mic).

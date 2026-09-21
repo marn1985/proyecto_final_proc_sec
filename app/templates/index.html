@@ -27,6 +27,23 @@
           <p class="hint">mp3, wav, m4a, flac, ogg, opus… (máx 100 MB). También acepta vídeo (mp4, webm).</p>
           <input type="file" id="file-input" name="file" accept="audio/*,video/*,.mp3,.wav,.m4a,.flac,.ogg,.opus,.aac,.wma,.webm,.mp4,.mov,.avi,.mkv" hidden />
         </div>
+        <div class="record-row">
+          <label class="mic-select hidden" id="mic-select-wrap">
+            Micrófono
+            <select id="mic-select"></select>
+          </label>
+          <button type="button" id="record-btn">🎙️ Grabar con micrófono</button>
+          <button type="button" id="stop-btn" class="btn-stop hidden">⏹ Detener</button>
+          <span id="rec-timer" class="rec-timer hidden">REC 0:00</span>
+          <span id="rec-level" class="rec-level hidden"><span id="rec-level-fill"></span></span>
+          <span id="rec-err" class="rec-err hidden"></span>
+        </div>
+        <p class="hint" style="margin:8px 0 0">
+          Al detener, el audio grabado se envía automáticamente al mismo pipeline
+          (WAV/PCM). Requiere permiso de micrófono y abrir la página desde
+          <code>http://127.0.0.1:8000</code>. Si al grabar no se mueve la barra de
+          nivel, selecciona tu micrófono en la lista y vuelve a intentar.
+        </p>
         <div class="row">
           <label>
             Idioma
@@ -47,6 +64,11 @@
         </div>
       </form>
       <div id="selected-file" class="selected-file"></div>
+      <div id="audio-preview" class="audio-preview hidden">
+        <audio id="player" controls preload="metadata"></audio>
+        <div class="audio-meta" id="audio-meta"></div>
+        <a id="download-link" class="download-link hidden" href="#" download="audio.wav">⬇ Descargar este audio</a>
+      </div>
       <div id="progress" class="progress hidden">
         <div class="spinner"></div>
         <p id="progress-text">Cargando modelo y transcribiendo… la primera petición puede tardar más.</p>

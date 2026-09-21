@@ -120,6 +120,79 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .selected-file { margin-top: 12px; font-size: 0.9rem; color: var(--accent); }
 
+/* Reproductor del audio seleccionado / grabado */
+.audio-preview {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.audio-preview audio { width: 100%; }
+.audio-meta { font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Grabación con micrófono */
+.record-row { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+.btn-stop { background: var(--bad); color: #fff; }
+.rec-timer {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--bad);
+  letter-spacing: 0.05em;
+}
+.rec-timer::before {
+  content: "●";
+  margin-right: 6px;
+  animation: blink 1s ease-in-out infinite;
+}
+@keyframes blink { 50% { opacity: 0.15; } }
+.rec-err { margin-top: 8px; color: var(--bad); font-size: 0.85rem; }
+
+/* Medidor de nivel en vivo durante la grabación */
+.rec-level {
+  width: 130px;
+  height: 8px;
+  background: #0b0f14;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.rec-level-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--bad));
+  transition: width 80ms linear;
+}
+
+.download-link {
+  font-size: 0.8rem;
+  color: var(--accent);
+  text-decoration: none;
+  width: fit-content;
+}
+.download-link:hover { text-decoration: underline; }
+
+/* Selector de micrófono */
+.mic-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.mic-select select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  max-width: 240px;
+}
+
 .progress { display: flex; align-items: center; gap: 14px; margin-top: 16px; color: var(--muted); }
 .progress p { margin: 0; font-size: 0.9rem; }
 .spinner {

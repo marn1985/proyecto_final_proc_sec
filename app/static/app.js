@@ -18,6 +18,13 @@ function fmtTime(s) {
   return `${m}:${ss}`;
 }
 
+function fmtDur(s) {
+  if (!isFinite(s) || s < 0) return "--:--";
+  const m = Math.floor(s / 60);
+  const ss = String(Math.floor(s % 60)).padStart(2, "0");
+  return `${m}:${ss}`;
+}
+
 /* paleta tipo turbo/viridis */
 const STOPS = [
   [0.03, 0.11, 0.30],
@@ -70,6 +77,60 @@ async function loadArch() {
 /* ---------- manejo del formulario ---------- */
 let selectedFile = null;
 
+let previewUrl = null;
+
+function setFile(f) {
+  selectedFile = f;
+  $("#selected-file").textContent = `📎 ${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`;
+  $("#submit-btn").disabled = false;
+
+  // Reproductor: URL temporal del audio subido o grabado
+  const player = $("#player"), meta = $("#audio-meta"), dl = $("#download-link");
+  if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
+  previewUrl = URL.createObjectURL(f);
+  player.src = previewUrl;
+  player.load();
+  dl.href = previewUrl;
+  dl.download = f.name || "audio.wav";
+  dl.classList.remove("hidden");
+  meta.textContent = "";
+  player.onloadedmetadata = () => {
+    meta.textContent = `Duración ${fmtDur(player.duration)} · Formato ${f.type || "desconocido"} · ${(f.size / 1024).toFixed(1)} KB`;
+  };
+  player.onerror = () => {
+    meta.textContent = "⚠️ Este navegador no pudo reproducir el audio: codec/forma no soportado o archivo dañado.";
+  };
+  $("#audio-preview").classList.remove("hidden");
+}
+
+async function runAnalysis() {
+  if (!selectedFile) return;
+  const form = new FormData();
+  form.append("file", selectedFile);
+  form.append("language", $("#language").value);
+  form.append("task", $("#task").value);
+
+  $("#error").classList.add("hidden");
+  $("#progress").classList.remove("hidden");
+  $("#submit-btn").disabled = true;
+
+  try {
+    const res = await fetch("/api/transcribe", { method: "POST", body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `Error HTTP ${res.status}`);
+    renderResults(data);
+    $("#results").classList.remove("hidden");
+    $("#results").scrollIntoView({ behavior: "smooth" });
+  } catch (err) {
+    const el = $("#error");
+    el.textContent = String(err && err.message ? err.message : err);
+    el.classList.remove("hidden");
+  } finally {
+    $("#progress").classList.add("hidden");
+    $("#submit-btn").disabled = false;
+  }
+}
+
 function wireUpload() {
   const dz = $("#dropzone"), fi = $("#file-input"), btn = $("#submit-btn");
 
@@ -83,40 +144,254 @@ function wireUpload() {
   });
   fi.addEventListener("change", () => { if (fi.files.length) setFile(fi.files[0]); });
 
-  function setFile(f) {
-    selectedFile = f;
-    $("#selected-file").textContent = `📎 ${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`;
-    btn.disabled = false;
+  $("#upload-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    runAnalysis();
+  });
+}
+
+/* ---------- grabación con micrófono (Web Audio → WAV, fallback MediaRecorder) ---------- */
+function wireRecord() {
+  const recBtn = $("#record-btn"), stopBtn = $("#stop-btn");
+  const timer = $("#rec-timer"), errEl = $("#rec-err");
+  const level = $("#rec-level"), levelFill = $("#rec-level-fill");
+  let stream = null, startedAt = 0, timerId = null;
+  let mode = null; // "webaudio" | "mediarecorder"
+  let mediaRecorder = null, chunks = [];
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    recBtn.disabled = true;
+    errEl.textContent = "Tu navegador no soporta grabación de micrófono (getUserMedia).";
+    errEl.classList.remove("hidden");
+    return;
   }
 
-  $("#upload-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    if (!selectedFile) return;
-    const form = new FormData();
-    form.append("file", selectedFile);
-    form.append("language", $("#language").value);
-    form.append("task", $("#task").value);
+  function stopTimer() {
+    if (timerId) { clearInterval(timerId); timerId = null; }
+  }
 
-    $("#error").classList.add("hidden");
-    $("#progress").classList.remove("hidden");
-    $("#submit-btn").disabled = true;
+  function tick() {
+    const s = Math.floor((Date.now() - startedAt) / 1000);
+    timer.textContent = `REC ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
 
+  function showErr(msg) {
+    errEl.textContent = msg;
+    errEl.classList.remove("hidden");
+  }
+
+  function resetButtons() {
+    stopTimer();
+    timer.classList.add("hidden");
+    recBtn.classList.remove("hidden");
+    stopBtn.classList.add("hidden");
+    level.classList.add("hidden");
+    levelFill.style.width = "0%";
+  }
+
+  recBtn.addEventListener("click", async () => {
+    errEl.classList.add("hidden");
     try {
-      const res = await fetch("/api/transcribe", { method: "POST", body: form });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || `Error HTTP ${res.status}`);
-      renderResults(data);
-      $("#results").classList.remove("hidden");
-      $("#results").scrollIntoView({ behavior: "smooth" });
-    } catch (err) {
-      const el = $("#error");
-      el.textContent = String(err && err.message ? err.message : err);
-      el.classList.remove("hidden");
-    } finally {
-      $("#progress").classList.add("hidden");
-      $("#submit-btn").disabled = false;
+      stream = await requestMic($("#mic-select").value);
+    } catch (e) {
+      showErr(
+        "No se pudo acceder al micrófono (" + (e.name || e.message) + "). " +
+        "Revisa el permiso del navegador y abre la página desde http://127.0.0.1:8000.");
+      return;
+    }
+
+    if (!startWebAudio(stream) && !startMediaRecorder(stream)) {
+      stream.getTracks().forEach((t) => t.stop());
+      showErr("Este navegador no puede grabar audio (sin Web Audio ni MediaRecorder).");
+      return;
+    }
+
+    startedAt = Date.now();
+    timer.textContent = "REC 0:00";
+    timer.classList.remove("hidden");
+    recBtn.classList.add("hidden");
+    stopBtn.classList.remove("hidden");
+    timerId = setInterval(tick, 500);
+  });
+
+  stopBtn.addEventListener("click", () => {
+    if (mode === "webaudio") {
+      finishWebAudio();
+    } else if (mode === "mediarecorder" && mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
     }
   });
+
+  /* ---- modo principal: Web Audio → WAV PCM (evita el bug de MediaRecorder+opus) ---- */
+  let ctx = null, srcNode = null, procNode = null, frames = [];
+
+  function startWebAudio(str) {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx || !Ctx.prototype.createScriptProcessor) return false;
+      ctx = new Ctx();
+      srcNode = ctx.createMediaStreamSource(str);
+      procNode = ctx.createScriptProcessor(4096, 1, 1);
+      frames = [];
+      procNode.onaudioprocess = (ev) => {
+        const ch = ev.inputBuffer.getChannelData(0);
+        if (ch.length) frames.push(new Float32Array(ch));
+        let peak = 0;
+        for (let i = 0; i < ch.length; i += 32) {
+          const v = Math.abs(ch[i]);
+          if (v > peak) peak = v;
+        }
+        levelFill.style.width = Math.round(Math.min(1, peak) * 100) + "%";
+      };
+      const mute = ctx.createGain();
+      mute.gain.value = 0; // evitar eco del micrófono por el monitor
+      srcNode.connect(procNode);
+      procNode.connect(mute);
+      mute.connect(ctx.destination);
+      if (ctx.state === "suspended") ctx.resume();
+      mode = "webaudio";
+      level.classList.remove("hidden");
+      return true;
+    } catch (e) {
+      try { srcNode?.disconnect(); procNode?.disconnect(); ctx?.close(); } catch (_) { /* noop */ }
+      return false;
+    }
+  }
+
+  function finishWebAudio() {
+    try { srcNode.disconnect(); procNode.disconnect(); } catch (_) { /* noop */ }
+    const rate = ctx ? (ctx.sampleRate || 48000) : 48000;
+    try { ctx.close(); } catch (_) { /* noop */ }
+    const count = frames.reduce((n, f) => n + f.length, 0);
+    const raw = new Float32Array(count);
+    let at = 0;
+    for (const f of frames) { raw.set(f, at); at += f.length; }
+    frames = [];
+    stream.getTracks().forEach((t) => t.stop());
+    resetButtons();
+    if (raw.length < 320) { // menos de ~20 ms a 16 kHz
+      showErr("La grabación quedó vacía (muy corta). Intenta grabando al menos 1 segundo.");
+      return;
+    }
+    const mono = resampleLinear(raw, rate, 16000);
+    const blob = encodeWav(mono, 16000);
+    setFile(new File([blob], `mic_${Date.now()}.wav`, { type: "audio/wav" }));
+    populateMicSelect();
+    runAnalysis();
+  }
+
+  /* ---- modo respaldo: MediaRecorder (solo si Web Audio no está disponible) ---- */
+  function startMediaRecorder(str) {
+    try {
+      if (!window.MediaRecorder) return false;
+      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")
+          ? "audio/ogg;codecs=opus"
+          : "";
+      mediaRecorder = new MediaRecorder(str, mime ? { mimeType: mime } : undefined);
+      chunks = [];
+      mediaRecorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      mediaRecorder.onstop = () => {
+        const type = mediaRecorder.mimeType || "audio/webm";
+        const ext = type.includes("ogg") ? "ogg" : "webm";
+        const blob = new Blob(chunks, { type });
+        stream.getTracks().forEach((t) => t.stop());
+        resetButtons();
+        setFile(new File([blob], `mic_${Date.now()}.${ext}`, { type }));
+        populateMicSelect();
+        runAnalysis();
+      };
+      mediaRecorder.onerror = () => showErr("Error durante la grabación de audio.");
+      mediaRecorder.start();
+      mode = "mediarecorder";
+      level.classList.add("hidden");
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+}
+
+/* ---------- utilidades de audio (codificación WAV PCM) ---------- */
+function resampleLinear(input, inRate, outRate) {
+  if (inRate === outRate) return input;
+  const outLen = Math.max(1, Math.floor(input.length * outRate / inRate));
+  const out = new Float32Array(outLen);
+  const ratio = inRate / outRate;
+  for (let i = 0; i < outLen; i++) {
+    const pos = i * ratio;
+    const i0 = Math.floor(pos);
+    const i1 = Math.min(i0 + 1, input.length - 1);
+    const f = pos - i0;
+    out[i] = input[i0] * (1 - f) + input[i1] * f;
+  }
+  return out;
+}
+
+function encodeWav(samples, sampleRate) {
+  const n = samples.length;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const dv = new DataView(buf);
+  const wstr = (off, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)); };
+  wstr(0, "RIFF"); dv.setUint32(4, 36 + n * 2, true); wstr(8, "WAVE");
+  wstr(12, "fmt "); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, sampleRate, true); dv.setUint32(28, sampleRate * 2, true);
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  wstr(36, "data"); dv.setUint32(40, n * 2, true);
+  let off = 44;
+  for (let i = 0; i < n; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    dv.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    off += 2;
+  }
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+/* ---------- captura robusta de micrófono ---------- */
+// Lista de configuraciones de captura: cubre bugs conocidos de Chromium/Windows
+// (AEC que silencia, formatos mono/estéreo, sample rates).
+const MIC_CONFIGS = [
+  { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+  { channelCount: 1, sampleRate: 16000 },
+  { channelCount: 2, sampleRate: 48000 },
+];
+
+async function requestMic(deviceId) {
+  const combos = [];
+  for (const cfg of MIC_CONFIGS) combos.push({ cfg, deviceId });
+  if (deviceId) for (const cfg of MIC_CONFIGS) combos.push({ cfg, deviceId: "" });
+  let lastErr = null;
+  for (const { cfg, deviceId: did } of combos) {
+    try {
+      const audio = { ...cfg };
+      if (did) audio.deviceId = { exact: did };
+      return await navigator.mediaDevices.getUserMedia({ audio });
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("No se pudo abrir el micrófono");
+}
+
+function populateMicSelect() {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  navigator.mediaDevices.enumerateDevices()
+    .then((devs) => {
+      const mics = devs.filter((d) => d.kind === "audioinput");
+      const sel = $("#mic-select"), wrap = $("#mic-select-wrap");
+      if (!sel || !wrap) return;
+      if (mics.length <= 1) { wrap.classList.add("hidden"); return; }
+      const cur = sel.value;
+      sel.innerHTML =
+        '<option value="">Predeterminado del sistema</option>' +
+        mics.map((m, i) =>
+          `<option value="${esc(m.deviceId)}">${esc(m.label || "Micrófono " + (i + 1))}</option>`).join("");
+      if (cur) sel.value = cur;
+      wrap.classList.remove("hidden");
+    })
+    .catch(() => { /* sin dispositivos o sin permiso aun */ });
 }
 
 /* ---------- render de resultados ---------- */
@@ -224,3 +499,5 @@ function drawDecoder(dec) {
 /* ---------- init ---------- */
 loadArch();
 wireUpload();
+wireRecord();
+populateMicSelect();
