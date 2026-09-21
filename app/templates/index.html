@@ -97,6 +97,11 @@
             rellena/corta a 30 s = 3000 frames. El encoder recibe <b>(80, 3000)</b>.
           </p>
           <canvas id="mel-canvas" class="heatmap"></canvas>
+          <p id="mel-warn" class="warn hidden">
+            ⚠️ Este mel está plano: la ventana de 30 s analizada no tiene señal audible
+            (silencio). Revisa que el micrófono capture sonido —si grabas, usa Microsoft
+            Edge en este equipo— o que el archivo no esté en silencio.
+          </p>
         </div>
 
         <div class="stage">

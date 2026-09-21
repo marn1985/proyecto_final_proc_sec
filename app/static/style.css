@@ -215,6 +215,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   white-space: pre-wrap;
 }
 
+.warn {
+  margin-top: 10px;
+  color: #ffd43b;
+  background: rgba(255, 212, 59, 0.07);
+  border: 1px solid rgba(255, 212, 59, 0.35);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+}
+
 .hidden { display: none !important; }
 
 /* Resultados */

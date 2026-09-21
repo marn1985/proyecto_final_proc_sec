@@ -39,13 +39,17 @@ function colorFor(t) {
   const i = Math.min(STOPS.length - 2, Math.floor(x));
   const f = x - i;
   const a = STOPS[i], b = STOPS[i + 1];
-  const c = a.map((v, k) => Math.round(v + (b[k] - v) * f));
+  const c = a.map((v, k) => Math.round((v + (b[k] - v) * f) * 255));
   return `rgb(${c[0]},${c[1]},${c[2]})`;
 }
 
 function drawHeatmap(canvas, rows, cols, getValue) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h) { // aún no visible (display:none): reintenta en el siguiente frame
+    requestAnimationFrame(() => drawHeatmap(canvas, rows, cols, getValue));
+    return;
+  }
   canvas.width = w * dpr;
   canvas.height = h * dpr;
   const ctx = canvas.getContext("2d");
@@ -118,9 +122,11 @@ async function runAnalysis() {
     const res = await fetch("/api/transcribe", { method: "POST", body: form });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `Error HTTP ${res.status}`);
-    renderResults(data);
+    // Mostrar la sección ANTES de dibujar: con display:none los canvas miden 0×0
+    // y los espectrogramas/activaciones quedarían en blanco.
     $("#results").classList.remove("hidden");
     $("#results").scrollIntoView({ behavior: "smooth" });
+    renderResults(data);
   } catch (err) {
     const el = $("#error");
     el.textContent = String(err && err.message ? err.message : err);
@@ -439,6 +445,16 @@ function drawMel(mel) {
   const canvas = $("#mel-canvas");
   const grid = mel.grid;
   drawHeatmap(canvas, mel.n_mels, mel.n_cols, (r, c) => grid[r][c]);
+
+  // Aviso si el mel es casi uniforme (audio en silencio)
+  const warn = $("#mel-warn");
+  const seen = new Set();
+  for (let r = 0; r < grid.length && seen.size <= 3; r++) {
+    for (let c = 0; c < grid[r].length && seen.size <= 3; c++) {
+      seen.add(grid[r][c]);
+    }
+  }
+  warn.classList.toggle("hidden", seen.size > 3);
 }
 
 function drawEncoder(enc) {
