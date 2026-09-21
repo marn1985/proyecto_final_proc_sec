@@ -7,3 +7,6 @@ __pycache__/
 uploads/
 samples/
 .cache/
+
+# Documento local de referencia (no se comparte en el repo)
+GIT-CHEATSHEET.md
