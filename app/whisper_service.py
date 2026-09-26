@@ -3,10 +3,10 @@
 Expone dos cosas:
 1. La transcripción "oficial" (``model.transcribe``) con segmentos y tiempos.
 2. Un pipeline de análisis que permite *validar* cómo trabaja la arquitectura:
-   - Encoder: mel spectrograma de entrada y las activaciones de cada bloque
-     (capturadas con forward hooks), para ver cómo el audio se convierte en features.
+   - Encoder: mel spectrograma de entrada, para ver cómo se prepara el audio.
    - Decoder: generación token a token (greedy, sin timestamps) replicando el
-     bucle de ``whisper.decoding.DecodingTask``, con el top-5 de cada paso.
+     bucle de ``whisper.decoding.DecodingTask``, con el top-5 de cada paso y la
+     matriz de cross-attention (alineación texto↔audio) de la última capa.
 
 La API se replica del código fuente instalado de whisper (decoding.py / model.py):
 - ``model.encoder(mel)`` -> (1, n_audio_ctx=1500, n_audio_state=512)
@@ -29,6 +29,7 @@ import whisper
 from whisper.tokenizer import get_tokenizer
 
 MODEL_NAME = "base"  # tiny / base / small / medium / large (ver whisper.available_models())
+N_ATTN_COLS = 150  # columnas (tiempo, downsampled) de la matriz de cross-attention
 
 
 def _pick_device() -> str:
@@ -92,7 +93,6 @@ class WhisperAnalyzer:
         ).to(self.device)
         mel = whisper.pad_or_trim(mel_full, whisper.audio.N_FRAMES)
 
-        encoder = self._encoder_pipeline(mel)
         decoder = self._decoder_pipeline(mel, language, task)
 
         elapsed = time.time() - t0
@@ -136,58 +136,7 @@ class WhisperAnalyzer:
                 ],
             },
             "mel": self._mel_payload(mel, window_s),
-            "encoder": encoder,
             "decoder": decoder,
-        }
-
-    # ------------------------------------------------------------- encoder
-    def _encoder_pipeline(self, mel: torch.Tensor) -> dict:
-        """Corre el encoder capturando la salida de cada ResidualAttentionBlock."""
-        outputs: dict = {}
-        hooks = []
-        for i, block in enumerate(self.model.encoder.blocks):
-            handle = block.register_forward_hook(
-                lambda _m, _i, out, idx=i: outputs.__setitem__(idx, out.detach())
-            )
-            hooks.append(handle)
-        try:
-            with torch.no_grad():
-                features = self.model.encoder(mel.unsqueeze(0))
-        finally:
-            for h in hooks:
-                h.remove()
-
-        layers = []
-        for i in range(len(self.model.encoder.blocks)):
-            act = outputs[i][0].float()  # (n_audio_ctx, n_audio_state)
-            layers.append(
-                {
-                    "layer": i,
-                    "stats": {
-                        "mean": round(float(act.mean()), 4),
-                        "std": round(float(act.std()), 4),
-                        "max_abs": round(float(act.abs().max()), 4),
-                    },
-                    "activation": self._bucket_1d(act, 120),
-                }
-            )
-        final = features[0].float()
-        layers.append(
-            {
-                "layer": "out",
-                "stats": {
-                    "mean": round(float(final.mean()), 4),
-                    "std": round(float(final.std()), 4),
-                    "max_abs": round(float(final.abs().max()), 4),
-                },
-                "activation": self._bucket_1d(final, 120),
-            }
-        )
-        return {
-            "n_layers": len(self.model.encoder.blocks),
-            "n_tokens": features.shape[1],
-            "state_dim": features.shape[2],
-            "layers": layers,
         }
 
     # ------------------------------------------------------------- decoder
@@ -228,6 +177,7 @@ class WhisperAnalyzer:
             "text": steps["text"],
             "avg_logprob": steps["avg_logprob"],
             "no_speech_prob": steps["no_speech_prob"],
+            "cross_attention": steps["cross_attention"],
         }
 
     def _decode_steps(self, features, tokenizer, sot_sequence, sample_begin: int) -> dict:
@@ -235,6 +185,18 @@ class WhisperAnalyzer:
         device = features.device
         tokens = torch.tensor([sot_sequence], device=device)
         cache, hooks = self.model.install_kv_cache_hooks()
+
+        # Cross-attention (última capa del decoder) para la matriz de alineación
+        # texto↔audio. La ruta rápida (SDPA) no expone los pesos de atención, solo
+        # el resultado ya combinado con softmax+values: hay que desactivarla mientras
+        # dura este bucle para que qkv_attention() nos devuelva el `qk` crudo.
+        prev_sdpa = whisper.model.MultiHeadAttention.use_sdpa
+        whisper.model.MultiHeadAttention.use_sdpa = False
+        cross_attn_out: dict = {}
+        attn_hook = self.model.decoder.blocks[-1].cross_attn.register_forward_hook(
+            lambda _m, _i, out: cross_attn_out.__setitem__("qk", out[1])
+        )
+        hooks.append(attn_hook)
 
         suppress = list(tokenizer.non_speech_tokens) + [
             tokenizer.transcribe,
@@ -248,6 +210,7 @@ class WhisperAnalyzer:
         suppress = sorted(set(suppress))
 
         steps: list = []
+        attn_rows: list = []
         logprob_sum = 0.0
         n = 0
         no_speech_prob = None
@@ -267,6 +230,13 @@ class WhisperAnalyzer:
                         logits = self.model.decoder(
                             tokens[:, -1:], features, kv_cache=cache
                         )[:, -1]
+
+                    # fila de cross-attention que produjo el token de este paso: última
+                    # posición de la consulta, promediada sobre las 8 cabezas y
+                    # downsampled/normalizada 0..1 igual que el resto de heatmaps
+                    qk = cross_attn_out["qk"][0, :, -1, :].float()  # (n_head, n_audio_ctx)
+                    attn_weights = qk.softmax(dim=-1).mean(dim=0)  # (n_audio_ctx,)
+                    attn_rows.append(self._bucket_1d(attn_weights, N_ATTN_COLS))
 
                     if tokens.shape[-1] == sample_begin:  # SuppressBlank
                         logits[:, tokenizer.encode(" ") + [tokenizer.eot]] = -np.inf
@@ -302,6 +272,7 @@ class WhisperAnalyzer:
         finally:
             for hook in hooks:
                 hook.remove()
+            whisper.model.MultiHeadAttention.use_sdpa = prev_sdpa
 
         text_ids = [t for t in tokens[0].tolist() if t < tokenizer.eot]
         return {
@@ -309,6 +280,7 @@ class WhisperAnalyzer:
             "text": tokenizer.decode(text_ids),
             "avg_logprob": round(logprob_sum / max(n, 1), 4),
             "no_speech_prob": no_speech_prob,
+            "cross_attention": {"n_cols": N_ATTN_COLS, "rows": attn_rows},
         }
 
     # ------------------------------------------------------------- helpers

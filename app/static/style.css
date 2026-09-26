@@ -279,16 +279,55 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 #mel-canvas { height: 240px; }
 
-.stats-table { margin-top: 10px; font-size: 0.85rem; overflow-x: auto; }
-.stats-table table { width: 100%; border-collapse: collapse; }
-.stats-table th, .stats-table td {
-  border: 1px solid var(--border);
-  padding: 6px 10px;
-  text-align: left;
+/* Regla de tiempo (0-30s) encima del heatmap; el spacer replica el ancho de
+   .attn-labels para que los ticks queden alineados con las columnas del canvas */
+.attn-axis {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 4px;
+  font-size: 0.72rem;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
-.stats-table th { background: var(--panel-2); color: var(--muted); font-weight: 500; }
+.attn-axis-spacer { flex: 0 0 130px; }
+.attn-axis-ticks { flex: 1; min-width: 0; position: relative; height: 14px; }
+.attn-axis-ticks span { position: absolute; top: 0; white-space: nowrap; }
+.attn-axis-ticks span:first-child { transform: translateX(0); }
+.attn-axis-ticks span:last-child { transform: translateX(-100%); }
+.attn-axis-ticks span:not(:first-child):not(:last-child) { transform: translateX(-50%); }
+
+/* Matriz de cross-attention: etiquetas de token + heatmap, altura fijada por JS
+   (una fila por token generado) y scroll conjunto si hay muchas filas */
+.attn-row {
+  display: flex;
+  gap: 4px;
+  max-height: 480px;
+  overflow-y: auto;
+  border-radius: 10px;
+}
+.attn-labels {
+  flex: 0 0 130px;
+  display: flex;
+  flex-direction: column;
+  background: #0a0d12;
+  border: 1px solid var(--border);
+  border-right: 0;
+  border-radius: 10px 0 0 10px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.attn-labels div {
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--border);
+}
+.attn-labels div:last-child { border-bottom: 0; }
+#attn-canvas { flex: 1; min-width: 0; border-radius: 0 10px 10px 0; }
 
 /* Decoder */
 .decoder-details {
