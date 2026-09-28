@@ -437,7 +437,7 @@ function renderResults(d) {
     || "<li>Sin segmentos.</li>";
 
   drawMel(d.mel);
-  drawEncoder(d.encoder);
+  drawAttention(d.decoder);
   drawDecoder(d.decoder);
 }
 
@@ -457,21 +457,32 @@ function drawMel(mel) {
   warn.classList.toggle("hidden", seen.size > 3);
 }
 
-function drawEncoder(enc) {
-  const canvas = $("#encoder-canvas");
-  const rows = enc.layers.map((l) => l.activation);
-  const nRows = rows.length, nCols = rows[0].length;
-  drawHeatmap(canvas, nRows, nCols, (r, c) => rows[r][c]);
+function drawAttention(dec) {
+  const canvas = $("#attn-canvas");
+  const labelsEl = $("#attn-labels");
+  const axisEl = $("#attn-axis-ticks");
+  const rows = dec.cross_attention.rows;
+  const steps = dec.steps;
+  if (!rows.length) return;
 
-  $("#encoder-stats").innerHTML = `
-    <table>
-      <thead><tr><th>Capa</th><th>mean</th><th>std</th><th>max |x|</th></tr></thead>
-      <tbody>
-        ${enc.layers.map((l) => `
-          <tr><td>${l.layer === "out" ? "ln_post (salida)" : `bloque ${l.layer}`}</td>
-              <td>${l.stats.mean}</td><td>${l.stats.std}</td><td>${l.stats.max_abs}</td></tr>`).join("")}
-      </tbody>
-    </table>`;
+  // una fila por token generado: altura fija por fila para que las etiquetas
+  // queden pixel a pixel alineadas con las filas del heatmap (el contenedor
+  // .attn-row recorta/scrollea en conjunto si hay muchos tokens)
+  const ROW_H = 20;
+  const totalH = rows.length * ROW_H;
+  canvas.style.height = `${totalH}px`;
+  labelsEl.style.height = `${totalH}px`;
+
+  labelsEl.innerHTML = steps.map((s) =>
+    `<div style="height:${ROW_H}px" title="${esc(s.token)}">${esc(s.token)}</div>`).join("");
+
+  // las columnas cubren siempre la ventana completa de 30 s que procesa el
+  // encoder (aunque el audio real sea más corto y el resto sea relleno)
+  const ticks = [0, 5, 10, 15, 20, 25, 30];
+  axisEl.innerHTML = ticks.map((t) =>
+    `<span style="left:${(t / 30) * 100}%">${t}s</span>`).join("");
+
+  drawHeatmap(canvas, rows.length, dec.cross_attention.n_cols, (r, c) => rows[r][c]);
 }
 
 function drawDecoder(dec) {

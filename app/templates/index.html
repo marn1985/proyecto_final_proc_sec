@@ -105,15 +105,22 @@
         </div>
 
         <div class="stage">
-          <h3>Encoder · Activaciones por capa <span class="badge">encoder</span></h3>
+          <h3>Cross-attention · Alineación texto↔audio <span class="badge">decoder</span></h3>
           <p class="stage-note">
-            <code>conv1 → gelu → conv2(stride 2) → conv+embedding posicional → 6 bloques de
-            atención+MLP → ln_post</code>. La salida reduce 3000 → <b>1500 features</b> de 512
-            dims (una por cada ~0,02 s). Cada fila es la intensidad media de activación a lo
-            largo del tiempo (normalizada por capa).
+            Al generar cada token, el decoder atiende (cross-attention) sobre los 1500 frames
+            de audio del encoder. Cada <b>fila</b> es un paso del decoder (mismo orden que la
+            tabla de pasos de abajo) y cada <b>columna</b> un instante de los 30 s analizados;
+            el brillo indica en qué momento del audio se apoyó más el modelo para elegir ese
+            token (promedio de las 8 cabezas de la última capa del decoder, normalizado por fila).
           </p>
-          <canvas id="encoder-canvas" class="heatmap"></canvas>
-          <div id="encoder-stats" class="stats-table"></div>
+          <div class="attn-axis">
+            <div class="attn-axis-spacer"></div>
+            <div id="attn-axis-ticks" class="attn-axis-ticks"></div>
+          </div>
+          <div class="attn-row">
+            <div id="attn-labels" class="attn-labels"></div>
+            <canvas id="attn-canvas" class="heatmap"></canvas>
+          </div>
         </div>
 
         <div class="stage">
