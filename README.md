@@ -1,3 +1,5 @@
+# Trabajo Final Procesamiento de Datos Secuenciales con Deep Learning 2
+
 # Whisper Encoder/Decoder Explorer
 
 Página web (FastAPI) para subir un audio y **validar cómo el encoder y el decoder de
